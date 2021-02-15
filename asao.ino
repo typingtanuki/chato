@@ -11,7 +11,7 @@
 #define PIN6_R 6 // Mux shield
 #define PIN7_R 7 // Mux shield
 #define PIN8_R 8 // Mux shield
-#define PIN9 9 // Axe
+#define PIN9 9 // Motor
 #define PIN10_R 10 // Mux shield
 #define PIN11_R 11 // Mux shield
 #define PIN12_R 12 // Mux shield
@@ -19,17 +19,106 @@
 
 #define MAX_BRIGHTNESS 0.3
 
+
+#define KEYPAD 5 // Keypad analog
+
+#define BUTTON_1 876
+#define BUTTON_5 767
+#define BUTTON_6 682
+#define BUTTON_4 614
+#define BUTTON_2 558
+#define BUTTON_NONE 512
+#define BUTTON_9 465
+#define BUTTON_8 409
+#define BUTTON_10 340
+#define BUTTON_7 254
+#define BUTTON_3 145
+
+class Keypad {
+private:
+    unsigned short button = 0;
+    unsigned short last = 0;
+    bool cleared = false;
+
+    unsigned int p1 = 0;
+    unsigned int p2 = 0;
+    unsigned int p3 = 0;
+    unsigned int p4 = 0;
+    unsigned int p5 = 0;
+    unsigned int p6 = 0;
+    unsigned int p7 = 0;
+    unsigned int p8 = 0;
+    unsigned int p9 = 0;
+    unsigned int p10 = 0;
+
+public:
+    void init() {
+        p1 = (BUTTON_1 + BUTTON_5) / 2;
+        p2 = (BUTTON_5 + BUTTON_6) / 2;
+        p3 = (BUTTON_6 + BUTTON_4) / 2;
+        p4 = (BUTTON_4 + BUTTON_2) / 2;
+        p5 = (BUTTON_2 + BUTTON_NONE) / 2;
+        p6 = (BUTTON_NONE + BUTTON_9) / 2;
+        p7 = (BUTTON_9 + BUTTON_8) / 2;
+        p8 = (BUTTON_8 + BUTTON_10) / 2;
+        p9 = (BUTTON_10 + BUTTON_7) / 2;
+        p10 = (BUTTON_7 + BUTTON_3) / 2;
+    }
+
+    void loop() {
+        int keypress = analogRead(5);
+        if (keypress >= p1) {
+            button = 1;
+        } else if (keypress >= p2) {
+            button = 5;
+        } else if (keypress >= p3) {
+            button = 6;
+        } else if (keypress >= p4) {
+            button = 4;
+        } else if (keypress >= p5) {
+            button = 2;
+        } else if (keypress >= p6) {
+            button = 0;
+        } else if (keypress >= p7) {
+            button = 9;
+        } else if (keypress >= p8) {
+            button = 8;
+        } else if (keypress >= p9) {
+            button = 10;
+        } else if (keypress >= p10) {
+            button = 7;
+        } else {
+            button = 3;
+        }
+
+        if (last != button) {
+            Serial.print("Key: ");
+            Serial.println(button);
+            last = button;
+            cleared = false;
+        }
+    }
+
+    int currentKey() {
+        if (cleared) {
+            return 0;
+        }
+        cleared = true;
+        return button;
+    }
+};
+
+
 class Motor {
 private:
     int pin;
     int pos = 0;
+    int target = 0;
     Servo servo;
 
-    int SERVO_MIN = 45;
-    int SERVO_MAX = 135;
-    int SERVO_MID = (SERVO_MAX - SERVO_MIN) / 2;
-    int SERVO_LOW = (SERVO_MAX - SERVO_MIN) / 4;
-    int SERVO_HIGH = 3 * SERVO_LOW;
+    int SERVO_MIN = 0;
+    int SERVO_MAX = 179;
+    int SERVO_SPEED = 6;
 
 public:
     explicit Motor(int pin) {
@@ -40,12 +129,34 @@ public:
         servo.attach(pin);
     }
 
-    void loop() {
-        servo.write((int) random(45, 135));
+    boolean test() {
+        pos++;
+        servo.write(pos);
+        return pos >= SERVO_MAX;
     }
 
-    void move() {
-        servo.write((int) random(SERVO_MIN, SERVO_MAX));
+    void loop() {
+        int diff = target - pos;
+        if (diff > SERVO_SPEED) {
+            diff = SERVO_SPEED;
+        } else if (diff < -SERVO_SPEED) {
+            diff = -SERVO_SPEED;
+        }
+        if (diff < -1 || diff > 1) {
+            pos = pos + diff / 2;
+            servo.write(pos);
+
+            Serial.print("Motor moving:");
+            Serial.print(pos);
+            Serial.print("/");
+            Serial.println(target);
+        }
+    }
+
+    void randTarget() {
+        target = (int) random(SERVO_MIN, SERVO_MAX);
+        Serial.print("Motor target moved to:");
+        Serial.println(target);
     }
 };
 
@@ -151,7 +262,7 @@ public:
     }
 
     static int doDecay(int value) {
-        int out = value - (int) random(0, 120);
+        int out = value - (int) random(0, 12);
         if (out > 0) {
             out = out + (int) random(-5, 5);
         }
@@ -285,11 +396,13 @@ public:
     }
 };
 
+
 class Oni {
 private:
     Light *eye = new Light(PIN3, 12);
-    Motor *eyeMotor = new Motor(PIN2_R);
+    Motor *eyeMotor = new Motor(PIN9);
     Light *belly = new Light(PIN5, 60);
+    Keypad *keypad;
 
     unsigned long nextEyeTime = 0;
     unsigned long nextBellyTime = 0;
@@ -301,7 +414,9 @@ private:
     OniState oniState = INIT;
 
 public:
-    void init() {
+    void init(Keypad *keypad) {
+        this->keypad = keypad;
+
         eye->init();
         eyeMotor->init();
         belly->init();
@@ -311,7 +426,9 @@ public:
     void loop() {
         switch (oniState) {
             case INIT:
-                if (Timer::isPassed(nextOniTime)) {
+                if (eyeMotor->test()) {
+                    // Testing
+                } else if (Timer::isPassed(nextOniTime)) {
                     switch (eyeState) {
                         case OFF:
                             Serial.println("Testing SPIN");
@@ -384,9 +501,10 @@ public:
         belly->loop(bellyState);
 
         if (Timer::isPassed(nextEyeMoveTime)) {
-            eyeMotor->move();
+            eyeMotor->randTarget();
             nextEyeMoveTime = Timer::inXs(2);
         }
+        eyeMotor->loop();
     }
 
     static LightState newEyeState() {
@@ -423,11 +541,13 @@ public:
 };
 
 Oni oni;
+Keypad keypad;
 
 void setup() {
     Serial.begin(115200);
     randomSeed(analogRead(PIN0_R));
-    oni.init();
+    keypad.init();
+    oni.init(&keypad);
 }
 
 #pragma clang diagnostic push
@@ -436,7 +556,8 @@ void setup() {
 void loop() {
     while (true) {
         // Delay for a period of time (in milliseconds).
-        delay(100);
+        delay(10);
+        keypad.loop();
         oni.loop();
     }
 }
