@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
+#include <MuxShield.h>
 #include <Servo.h>
 
 #define PIN0_R 0 // Random seed
@@ -20,7 +21,8 @@
 #define MAX_BRIGHTNESS 0.3
 
 
-#define KEYPAD 5 // Keypad analog
+#define KEYPAD_PIN 5 // Keypad analog
+#define KEYPAD_STATE_COUNT 10 // Number of LEDs on keypad
 
 #define BUTTON_1 876
 #define BUTTON_5 767
@@ -34,11 +36,12 @@
 #define BUTTON_7 254
 #define BUTTON_3 145
 
+#define AUTO true
+#define MANUAL false
+
 class Keypad {
 private:
     unsigned short button = 0;
-    unsigned short last = 0;
-    bool cleared = false;
 
     unsigned int p1 = 0;
     unsigned int p2 = 0;
@@ -51,8 +54,32 @@ private:
     unsigned int p9 = 0;
     unsigned int p10 = 0;
 
+    bool *state;
+
+    MuxShield *mux;
+    int muxBand;
+
+    void initMux() {
+        mux->setMode(muxBand, DIGITAL_OUT);
+        showState();
+    }
+
+    void showState() {
+        for (int i = 0; i <= KEYPAD_STATE_COUNT; i++) {
+            mux->digitalWriteMS(muxBand, i, state[i]);
+        }
+    }
+
 public:
-    void init() {
+    Keypad(MuxShield *mux, int band) {
+        this->mux = mux;
+        muxBand = band;
+        state = new bool[KEYPAD_STATE_COUNT];
+        for (int i = 0; i < KEYPAD_STATE_COUNT; i++) {
+            state[i] = false;
+        }
+        initMux();
+
         p1 = (BUTTON_1 + BUTTON_5) / 2;
         p2 = (BUTTON_5 + BUTTON_6) / 2;
         p3 = (BUTTON_6 + BUTTON_4) / 2;
@@ -66,7 +93,8 @@ public:
     }
 
     void loop() {
-        int keypress = analogRead(5);
+        int keypress = analogRead(KEYPAD_PIN);
+
         if (keypress >= p1) {
             button = 1;
         } else if (keypress >= p2) {
@@ -91,20 +119,41 @@ public:
             button = 3;
         }
 
-        if (last != button) {
-            Serial.print("Key: ");
-            Serial.println(button);
-            last = button;
-            cleared = false;
-        }
+        showState();
     }
 
     int currentKey() {
-        if (cleared) {
-            return 0;
-        }
-        cleared = true;
         return button;
+    }
+
+    void setState(int state, bool enabled) {
+        this->state[state - 1] = enabled;
+    }
+
+    void testMode(int level) {
+        for (int i = 0; i < KEYPAD_STATE_COUNT; i++) {
+            state[i] = false;
+            if (level >= 1) {
+                if (i == 0 || i == 4 || i == 6) {
+                    state[i] = true;
+                }
+            }
+            if (level >= 2) {
+                if (i == 1 || i == 5 || i == 7) {
+                    state[i] = true;
+                }
+            }
+            if (level >= 3) {
+                if (i == 2 || i == 8) {
+                    state[i] = true;
+                }
+            }
+            if (level >= 4) {
+                if (i == 3 || i == 9) {
+                    state[i] = true;
+                }
+            }
+        }
     }
 };
 
@@ -112,6 +161,10 @@ public:
 class Motor {
 private:
     int pin;
+
+    bool tested = false;
+    bool mode = false;
+
     int pos = 0;
     int target = 0;
     Servo servo;
@@ -130,9 +183,14 @@ public:
     }
 
     boolean test() {
+        if (tested) {
+            return false;
+        }
         pos++;
+        Serial.println(pos);
         servo.write(pos);
-        return pos >= SERVO_MAX;
+        tested = pos >= SERVO_MAX;
+        return !tested;
     }
 
     void loop() {
@@ -145,18 +203,33 @@ public:
         if (diff < -1 || diff > 1) {
             pos = pos + diff / 2;
             servo.write(pos);
-
-            Serial.print("Motor moving:");
-            Serial.print(pos);
-            Serial.print("/");
-            Serial.println(target);
         }
     }
 
     void randTarget() {
+        if (mode == MANUAL) {
+            return;
+        }
+
         target = (int) random(SERVO_MIN, SERVO_MAX);
-        Serial.print("Motor target moved to:");
-        Serial.println(target);
+    }
+
+    void setMode(boolean isAuto) {
+        mode = isAuto;
+    }
+
+    void turnLeft() {
+        target -= 1;
+        if (target < SERVO_MIN) {
+            target = SERVO_MIN;
+        }
+    }
+
+    void turnRight() {
+        target += 1;
+        if (target > SERVO_MAX) {
+            target = SERVO_MAX;
+        }
     }
 };
 
@@ -199,17 +272,19 @@ private:
     int *buffer;
 
     int length;
+    int fullLength;
     int position1;
     int position2;
     int position3;
 
 public:
-    Light(int pin, int stripLength) {
+    Light(int pin, int stripLength, int fullLength) {
         length = stripLength;
+        this->fullLength = fullLength;
         color = new uint32_t[length];
         tmpColor = new uint32_t[length];
         buffer = new int[length];
-        neo = new Adafruit_NeoPixel(length, pin, NEO_GRB + NEO_KHZ800);
+        neo = new Adafruit_NeoPixel(fullLength, pin, NEO_GRB + NEO_KHZ800);
 
         position1 = 0;
         position2 = length / 3;
@@ -387,6 +462,9 @@ public:
             int g = brightness(unpackG(color[i]));
             int b = brightness(unpackB(color[i]));
             neo->setPixelColor(i, Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::Color(r, g, b)));
+            if (length + i < fullLength) {
+                neo->setPixelColor(i + length, Adafruit_NeoPixel::gamma32(Adafruit_NeoPixel::Color(r, g, b)));
+            }
         }
         neo->show();
     }
@@ -399,9 +477,9 @@ public:
 
 class Oni {
 private:
-    Light *eye = new Light(PIN3, 12);
+    Light *eye = new Light(PIN3, 12, 24);
     Motor *eyeMotor = new Motor(PIN9);
-    Light *belly = new Light(PIN5, 60);
+    Light *belly = new Light(PIN5, 60, 60);
     Keypad *keypad;
 
     unsigned long nextEyeTime = 0;
@@ -428,28 +506,36 @@ public:
             case INIT:
                 if (eyeMotor->test()) {
                     // Testing
+                    return;
                 } else if (Timer::isPassed(nextOniTime)) {
                     switch (eyeState) {
                         case OFF:
                             Serial.println("Testing SPIN");
                             eyeState = SPIN;
+                            keypad->testMode(1);
                             break;
                         case SPIN:
                             Serial.println("Testing FIRE");
                             eyeState = FIRE;
+                            keypad->testMode(2);
                             break;
                         case FIRE:
                             Serial.println("Testing RAINBOW");
+                            keypad->testMode(3);
                             eyeState = RAINBOW;
                             break;
                         case RAINBOW:
                             Serial.println("Testing RAINBOW_RED");
+                            keypad->testMode(4);
                             eyeState = RAINBOW_RED;
                             break;
                         case RAINBOW_RED:
                         default:
                             Serial.println("Testing finished");
+                            keypad->testMode(0);
                             oniState = IDLE;
+                            eyeMotor->setMode(AUTO);
+                            autoEyeControl();
                             nextOniTime = Timer::inXs(30);
                             return;
                     }
@@ -504,7 +590,34 @@ public:
             eyeMotor->randTarget();
             nextEyeMoveTime = Timer::inXs(2);
         }
+        switch (keypad->currentKey()) {
+            case 1:
+                autoEyeControl();
+                break;
+            case 5:
+                eyeMotor->setMode(MANUAL);
+                eyeMotor->turnLeft();
+                keypad->setState(1, false);
+                keypad->setState(5, true);
+                keypad->setState(7, false);
+                break;
+            case 7:
+                eyeMotor->setMode(MANUAL);
+                eyeMotor->turnRight();
+                keypad->setState(1, false);
+                keypad->setState(5, false);
+                keypad->setState(7, true);
+                break;
+        }
         eyeMotor->loop();
+        keypad->loop();
+    }
+
+    void autoEyeControl() {
+        eyeMotor->setMode(AUTO);
+        keypad->setState(1, true);
+        keypad->setState(5, false);
+        keypad->setState(7, false);
     }
 
     static LightState newEyeState() {
@@ -541,12 +654,12 @@ public:
 };
 
 Oni oni;
-Keypad keypad;
+MuxShield mux;
+Keypad keypad = Keypad(&mux, 1);
 
 void setup() {
     Serial.begin(115200);
     randomSeed(analogRead(PIN0_R));
-    keypad.init();
     oni.init(&keypad);
 }
 
