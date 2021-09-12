@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 2.8.4)
-set(CMAKE_TOOLCHAIN_FILE ${CMAKE_SOURCE_DIR}/cmake/ArduinoToolchain.cmake)
+set(CMAKE_TOOLCHAIN_FILE /home/tanuq/dev/Arduino-CMake-Toolchain/Arduino-toolchain.cmake)
 set(CMAKE_CXX_STANDARD 98)
 set(PROJECT_NAME asao)
+set(ARDUINO_BOARD "Arduino Uno [avr.uno]")
 
 set(${PROJECT_NAME}_BOARD uno)
 # set(ARDUINO_CPU)

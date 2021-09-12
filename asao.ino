@@ -8,7 +8,7 @@
 #define PIN2_R 2 // Mux shield
 #define PIN3 3   // Eyes
 #define PIN4_R 4 // Mux shield
-#define PIN5 5   // Belly
+#define PIN5 5   // Axe
 #define PIN6_R 6 // Mux shield
 #define PIN7_R 7 // Mux shield
 #define PIN8_R 8 // Mux shield
@@ -42,6 +42,8 @@
 class Keypad {
 private:
     unsigned short button = 0;
+    unsigned short prevButton = 0;
+    unsigned short lastButton = 0;
 
     unsigned int p1 = 0;
     unsigned int p2 = 0;
@@ -57,23 +59,28 @@ private:
     bool *state;
 
     MuxShield *mux;
-    int muxBand;
+    int muxDigitalOutput;
+    int muxAnalogInput;
+    int speed;
 
     void initMux() {
-        mux->setMode(muxBand, DIGITAL_OUT);
+        speed = 51;
+        mux->setMode(muxDigitalOutput, DIGITAL_OUT);
+        mux->setMode(muxAnalogInput, ANALOG_IN);
         showState();
     }
 
     void showState() {
         for (int i = 0; i <= KEYPAD_STATE_COUNT; i++) {
-            mux->digitalWriteMS(muxBand, i, state[i]);
+            mux->digitalWriteMS(muxDigitalOutput, i, state[i]);
         }
     }
 
 public:
-    Keypad(MuxShield *mux, int band) {
+    Keypad(MuxShield *mux, int digitalInput, int analogInput) {
         this->mux = mux;
-        muxBand = band;
+        muxDigitalOutput = digitalInput;
+        muxAnalogInput = analogInput;
         state = new bool[KEYPAD_STATE_COUNT];
         for (int i = 0; i < KEYPAD_STATE_COUNT; i++) {
             state[i] = false;
@@ -94,6 +101,7 @@ public:
 
     void loop() {
         int keypress = analogRead(KEYPAD_PIN);
+        speed = 1 + mux->analogReadMS(muxAnalogInput, 0) / 20;
 
         if (keypress >= p1) {
             button = 1;
@@ -107,6 +115,8 @@ public:
             button = 2;
         } else if (keypress >= p6) {
             button = 0;
+            lastButton = button;
+            prevButton = button;
         } else if (keypress >= p7) {
             button = 9;
         } else if (keypress >= p8) {
@@ -123,7 +133,17 @@ public:
     }
 
     int currentKey() {
+        lastButton = prevButton;
+        prevButton = button;
         return button;
+    }
+
+    int currentSpeed() {
+        return speed;
+    }
+
+    int lastKey() {
+        return lastButton;
     }
 
     void setState(int state, bool enabled) {
@@ -303,20 +323,27 @@ public:
         turnOff();
     }
 
-    void loop(LightState state) {
+    void loop(LightState state, int simulationSpeed) {
+        unsigned long steps = simulationSpeed;
+
+        Serial.println("Simulation:");
+        Serial.print("- simulationSpeed:");
+        Serial.println(simulationSpeed);
+        Serial.print("- steps:");
+        Serial.println(steps);
+
         switch (state) {
             case SPIN:
-                doDecay();
-                moveCenter();
+                spinLoop(steps);
                 break;
             case FIRE:
-                fireLoop();
+                fireLoop(steps);
                 break;
             case RAINBOW:
-                rainbowLoop(false);
+                rainbowLoop(false, steps);
                 break;
             case RAINBOW_RED:
-                rainbowLoop(true);
+                rainbowLoop(true, steps);
                 break;
             default:
                 turnOff();
@@ -326,17 +353,24 @@ public:
         apply();
     }
 
+    void spinLoop(int steps) {
+        for (int i = 0; i < steps; i++) {
+            doDecay();
+            moveCenter();
+        }
+    }
+
     void doDecay() {
         for (int i = 0; i < length; i++) {
             uint32_t current = color[i];
-            int r = doDecay(unpackR(current));
-            int g = doDecay(unpackG(current));
-            int b = doDecay(unpackB(current));
+            int r = computeDecay(unpackR(current));
+            int g = computeDecay(unpackG(current));
+            int b = computeDecay(unpackB(current));
             color[i] = Adafruit_NeoPixel::Color(r, g, b);
         }
     }
 
-    static int doDecay(int value) {
+    static int computeDecay(int value) {
         int out = value - (int) random(0, 12);
         if (out > 0) {
             out = out + (int) random(-5, 5);
@@ -377,48 +411,53 @@ public:
             position3 -= length;
         }
 
+        uint32_t lead = Adafruit_NeoPixel::Color(200, 0, 0);
         // Lead
-        color[position1] = Adafruit_NeoPixel::Color(200, 0, 0);
-        color[position2] = Adafruit_NeoPixel::Color(200, 0, 0);
-        color[position3] = Adafruit_NeoPixel::Color(200, 0, 0);
+        color[position1] = lead;
+        color[position2] = lead;
+        color[position3] = lead;
     }
 
-    void fireLoop() {
-        color[length / 2] = Adafruit_NeoPixel::Color(random(0, 255), 0, 0);
+    void fireLoop(int steps) {
+        for (int i = 0; i < steps; i++) {
+            color[length / 2] = Adafruit_NeoPixel::Color(random(0, 255), 0, 0);
 
-        for (int i = 0; i < length / 2; i++) {
-            int left = remapLeft(i);
-            int leftPrev = remapLeft(i - 1);
-            int right = remapRight(i);
-            int rightPrev = remapRight(i - 1);
+            for (int i = 0; i < length / 2; i++) {
+                int left = remapLeft(i);
+                int leftPrev = remapLeft(i - 1);
+                int right = remapRight(i);
+                int rightPrev = remapRight(i - 1);
 
-            tmpColor[left] = Adafruit_NeoPixel::Color(
-                    (unpackR(color[left]) + unpackR(color[leftPrev])) / random(2, 4),
-                    0,
-                    0);
-            tmpColor[right] = Adafruit_NeoPixel::Color(
-                    (unpackR(color[right]) + unpackR(color[rightPrev])) / random(2, 4),
-                    0,
-                    0);
-        }
-        uint32_t *tmp = color;
-        color = tmpColor;
-        tmpColor = tmp;
-    }
-
-    void rainbowLoop(bool redOnly) {
-        for (int i = 0; i < length; i++) {
-            position1++;
-            int r = rainbow(position1 % 256);
-            int g = 0;
-            int b = 0;
-            if (!redOnly) {
-                g = rainbow((position1 + 85) % 256);
-                b = rainbow((position1 + 170) % 256);
+                tmpColor[left] = Adafruit_NeoPixel::Color(
+                        (unpackR(color[left]) + unpackR(color[leftPrev])) / random(2, 4),
+                        0,
+                        0);
+                tmpColor[right] = Adafruit_NeoPixel::Color(
+                        (unpackR(color[right]) + unpackR(color[rightPrev])) / random(2, 4),
+                        0,
+                        0);
             }
-            color[i] = Adafruit_NeoPixel::Color(r, g, b);
+            uint32_t *tmp = color;
+            color = tmpColor;
+            tmpColor = tmp;
         }
-        position1 -= length - 3;
+    }
+
+    void rainbowLoop(bool redOnly, int steps) {
+        for (int i = 0; i < steps; i++) {
+            for (int i = 0; i < length; i++) {
+                position1++;
+                int r = rainbow(position1 % 256);
+                int g = 0;
+                int b = 0;
+                if (!redOnly) {
+                    g = rainbow((position1 + 85) % 256);
+                    b = rainbow((position1 + 170) % 256);
+                }
+                color[i] = Adafruit_NeoPixel::Color(r, g, b);
+            }
+            position1 -= length - 3;
+        }
     }
 
     static int rainbow(byte WheelPos) {
@@ -479,16 +518,20 @@ class Oni {
 private:
     Light *eye = new Light(PIN3, 12, 24);
     Motor *eyeMotor = new Motor(PIN9);
-    Light *belly = new Light(PIN5, 60, 60);
+    Motor *axeMotor = new Motor(PIN13);
+    Light *axe = new Light(PIN5, 60, 60);
     Keypad *keypad;
 
+    bool autoEyeState = false;
+    bool autoAxeState = false;
+
     unsigned long nextEyeTime = 0;
-    unsigned long nextBellyTime = 0;
+    unsigned long nextAxeTime = 0;
     unsigned long nextEyeMoveTime = 0;
     unsigned long nextOniTime = 0;
 
     LightState eyeState = OFF;
-    LightState bellyState = OFF;
+    LightState axeState = OFF;
     OniState oniState = INIT;
 
 public:
@@ -497,7 +540,7 @@ public:
 
         eye->init();
         eyeMotor->init();
-        belly->init();
+        axe->init();
         nextOniTime = Timer::inXs(0);
     }
 
@@ -535,7 +578,13 @@ public:
                             keypad->testMode(0);
                             oniState = IDLE;
                             eyeMotor->setMode(AUTO);
+
                             autoEyeControl();
+                            autoAxeControl();
+
+                            autoEyeLightControl();
+                            autoAxeLightControl();
+
                             nextOniTime = Timer::inXs(30);
                             return;
                     }
@@ -548,26 +597,10 @@ public:
                     nextOniTime = Timer::inXm(1);
                 }
                 if (Timer::isPassed(nextEyeTime)) {
-                    switch (eyeState) {
-                        case OFF:
-                            eyeState = newEyeState();
-                            nextEyeTime = Timer::inXs(12);
-                            break;
-                        default:
-                            eyeState = OFF;
-                            nextEyeTime = Timer::inXs(5);
-                    }
+                    newEyeState();
                 }
-                if (Timer::isPassed(nextBellyTime)) {
-                    switch (eyeState) {
-                        case OFF:
-                            bellyState = newBellyState();
-                            nextBellyTime = Timer::inXs(20);
-                            break;
-                        default:
-                            bellyState = OFF;
-                            nextBellyTime = Timer::inXs(10);
-                    }
+                if (Timer::isPassed(nextAxeTime)) {
+                    newAxeState();
                 }
                 break;
             case MOVE:
@@ -576,15 +609,19 @@ public:
                     nextOniTime = Timer::inXs(30);
                 }
 
-                bellyState = FIRE;
-                eyeState = SPIN;
+                if (autoAxeState) {
+                    axeState = FIRE;
+                }
+                if (autoEyeState) {
+                    eyeState = SPIN;
+                }
                 break;
             default:
                 break;
         }
 
-        eye->loop(eyeState);
-        belly->loop(bellyState);
+        eye->loop(eyeState, keypad->currentSpeed());
+        axe->loop(axeState, keypad->currentSpeed());
 
         if (Timer::isPassed(nextEyeMoveTime)) {
             eyeMotor->randTarget();
@@ -599,14 +636,54 @@ public:
                 eyeMotor->turnLeft();
                 keypad->setState(1, false);
                 keypad->setState(5, true);
-                keypad->setState(7, false);
+                keypad->setState(7, true);
                 break;
             case 7:
                 eyeMotor->setMode(MANUAL);
                 eyeMotor->turnRight();
                 keypad->setState(1, false);
-                keypad->setState(5, false);
+                keypad->setState(5, true);
                 keypad->setState(7, true);
+                break;
+            case 2:
+                autoAxeControl();
+                break;
+            case 6:
+                axeMotor->setMode(MANUAL);
+                axeMotor->turnLeft();
+                keypad->setState(2, false);
+                keypad->setState(6, true);
+                keypad->setState(8, true);
+                break;
+            case 8:
+                axeMotor->setMode(MANUAL);
+                axeMotor->turnRight();
+                keypad->setState(2, false);
+                keypad->setState(6, true);
+                keypad->setState(8, true);
+                break;
+            case 3:
+                autoEyeLightControl();
+                break;
+            case 9:
+                if (!autoEyeState && keypad->lastKey() != 9) {
+                    eyeState = nextLightPattern(eyeState);
+                }
+                autoEyeState = false;
+                keypad->setState(3, false);
+                keypad->setState(9, true);
+                break;
+            case 4:
+                autoAxeLightControl();
+                break;
+            case 10:
+                if (!autoEyeState && keypad->lastKey() != 10) {
+                    axeState = nextLightPattern(axeState);
+                }
+                autoAxeState = false;
+                axeMotor->turnLeft();
+                keypad->setState(4, false);
+                keypad->setState(10, true);
                 break;
         }
         eyeMotor->loop();
@@ -620,7 +697,50 @@ public:
         keypad->setState(7, false);
     }
 
-    static LightState newEyeState() {
+    void autoAxeControl() {
+        axeMotor->setMode(AUTO);
+        keypad->setState(2, true);
+        keypad->setState(6, false);
+        keypad->setState(8, false);
+    }
+
+    void autoEyeLightControl() {
+        autoEyeState = true;
+        keypad->setState(3, true);
+        keypad->setState(9, false);
+    }
+
+    void autoAxeLightControl() {
+        autoAxeState = true;
+        keypad->setState(4, true);
+        keypad->setState(10, false);
+    }
+
+    void newEyeState() {
+        if (!autoEyeState) {
+            return;
+        }
+
+        switch (eyeState) {
+            case OFF:
+                eyeState = pickEyeState();
+                nextEyeTime = Timer::inXs(12);
+                break;
+            default:
+                eyeState = OFF;
+                nextEyeTime = Timer::inXs(5);
+        }
+    }
+
+    static LightState nextLightPattern(LightState current) {
+        int next = current + 1;
+        if (next > RAINBOW_RED) {
+            return OFF;
+        }
+        return (LightState) next;
+    }
+
+    static LightState pickEyeState() {
         switch (random(0, 4)) {
             case 1:
                 return SPIN;
@@ -633,7 +753,23 @@ public:
         }
     }
 
-    static LightState newBellyState() {
+    void newAxeState() {
+        if (!autoAxeState) {
+            return;
+        }
+
+        switch (eyeState) {
+            case OFF:
+                axeState = pickAxeState();
+                nextAxeTime = Timer::inXs(20);
+                break;
+            default:
+                axeState = OFF;
+                nextAxeTime = Timer::inXs(10);
+        }
+    }
+
+    static LightState pickAxeState() {
         switch (random(0, 3)) {
             case 1:
                 return SPIN;
@@ -655,7 +791,7 @@ public:
 
 Oni oni;
 MuxShield mux;
-Keypad keypad = Keypad(&mux, 1);
+Keypad keypad = Keypad(&mux, 1, 2);
 
 void setup() {
     Serial.begin(115200);
