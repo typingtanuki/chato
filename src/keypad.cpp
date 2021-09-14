@@ -27,7 +27,7 @@ Keypad::Keypad(MuxShield *mux, int analogOutput, int digitalInput, int analogInp
 
 void Keypad::loop() {
     unsigned int keypress = analogRead(this->analogOutput);
-    speed = 1 + mux->analogReadMS(muxAnalogInput, 0) / 20;
+    speed = 1 + mux->analogReadMS(muxAnalogInput, 0);
 
     if (keypress >= KEYPAD_TENSION_P1) {
         button = BUTTON_EYE_MOVE_AUTO;

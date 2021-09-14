@@ -16,6 +16,8 @@ private:
     uint32_t black = Adafruit_NeoPixel::Color(0, 0, 0);
     uint32_t red = Adafruit_NeoPixel::Color(200, 0, 0);
 
+    unsigned long lastRefresh = 0;
+
     int *buffer;
 
     int length;

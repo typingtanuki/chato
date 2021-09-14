@@ -23,10 +23,19 @@ Light::~Light() {
 void Light::init() {
     neo->begin();
     turnOff();
+    lastRefresh = millis();
 }
 
 void Light::loop(LightState state, int simulationSpeed) {
-    int steps = simulationSpeed;
+    unsigned long now = millis();
+    unsigned long millisSince = now - lastRefresh;
+
+    if (simulationSpeed > millisSince) {
+        return;
+    }
+
+    int steps = 1;
+    lastRefresh = now;
 
     Serial.println("Simulation:");
     Serial.print("- simulationSpeed:");
